@@ -1,3 +1,26 @@
+<?php
+require __DIR__ . '/../config/database.php';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $entrada = trim($_POST['login'] ?? '');
+    $senha = $_POST['senha'] ?? '';
+
+    $pdo = conectar();
+    $stmt = $pdo->prepare(
+        "SELECT ID_USUARIO, NOME, SENHA, CARGO
+        FROM USUARIO
+        WHERE ENTRADA = :entrada"
+    );
+
+    $stmt->execute([':entrada' => $entrada]);
+    $usuario = $stmt->fetch();
+
+    var_dump($usuario);
+    exit;
+}
+
+?>
+
 <!DOCTYPE html>
 <html lang="pt-br">
 
@@ -16,8 +39,8 @@
 
             <form method="POST">
                 <div class="campo">
-                    <label for="ra">R.A.</label>
-                    <input type="text" id="ra" name="ra" inputmode="numeric" maxlength="15" placeholder="00.000.000000-0" required>
+                    <label for="login">Login</label>
+                    <input type="text" id="login" name="login" inputmode="text" placeholder="insira seu login" required>
                 </div>
 
                 <div class="campo">
@@ -29,8 +52,6 @@
             </form>
         </main>
     </div>
-
-    <script src="../assets/js/mascaras.js"></script>
 </body>
 
 </html>
