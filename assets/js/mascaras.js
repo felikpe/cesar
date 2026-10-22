@@ -17,5 +17,8 @@ function aplicarMascara(input, padrao) {
     });
 }
 
-aplicarMascara(document.getElementById('cpf'), '000.000.000-00');
-aplicarMascara(document.getElementById('ra'), '00.000.000000-0');
+const campoCpf = document.getElementById('cpf');
+const campoRa = document.getElementById('ra');
+
+if (campoCpf) aplicarMascara(campoCpf, '000.000.000-00');
+if (campoRa) aplicarMascara(campoRa, '00.000.000000-0');
