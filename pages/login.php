@@ -1,7 +1,11 @@
 <?php
+session_start();
 require __DIR__ . '/../config/database.php';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST'){
+$erro ='';
+$entrada='';
+
+if($_SERVER ['REQUEST_METHOD'] === 'POST'){
     $entrada = trim($_POST['login'] ?? '');
     $senha = $_POST['senha'] ?? '';
 
@@ -11,12 +15,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'){
         FROM USUARIO
         WHERE ENTRADA = :entrada"
     );
-
     $stmt->execute([':entrada' => $entrada]);
     $usuario = $stmt->fetch();
 
-    var_dump($usuario);
-    exit;
+    if ($usuario && password_verify($senha, $usuario['SENHA'])){
+        session_regenerate_id(true);
+        $_SESSION['id_usuario'] = $usuario['ID_USUARIO'];
+        $_SESSION['nome'] = $usuario['NOME'];
+        $_SESSION['cargo'] = $usuario['CARGO'];
+
+        header('Location: inicio.php');
+        exit;
+    }
+
+    $erro = 'Login ou senha incorretos.';
+
 }
 
 ?>
@@ -38,9 +51,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'){
             <h1>Identifique-se, atirador</h1>
 
             <form method="POST">
+                <?php if ($erro !== ''): ?>
+                    <p class="erro"><?= htmlspecialchars($erro) ?></p>
+                <?php endif; ?>
+
                 <div class="campo">
                     <label for="login">Login</label>
-                    <input type="text" id="login" name="login" inputmode="text" placeholder="insira seu login" required>
+                    <input type="text" id="login" name="login" inputmode="text" placeholder="insira seu login" value="<?= htmlspecialchars($entrada) ?>" required>
                 </div>
 
                 <div class="campo">
