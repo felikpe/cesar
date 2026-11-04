@@ -40,11 +40,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $usuario = $stmt->fetch();
 
         if (
-            $usuario &&
-            (int) $usuario['ATIVO'] === 1 &&
-            in_array($usuario['CARGO'], ['AUXILIAR', 'ADMINISTRADOR'], true) &&
-            password_verify($senha, $usuario['SENHA'])
-        ) {
+                $usuario &&
+                (int) $usuario['ATIVO'] === 1 &&
+                in_array($usuario['CARGO'], ['ARMEIRO', 'ADMINISTRADOR'], true) &&
+                password_verify($senha, $usuario['SENHA'])
+            ) {
             session_regenerate_id(true);
             $_SESSION['id_usuario'] = (int) $usuario['ID_USUARIO'];
             $_SESSION['nome'] = $usuario['NOME'];

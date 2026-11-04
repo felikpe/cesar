@@ -1,0 +1,9 @@
+INSERT INTO USUARIO (NOME, ENTRADA, SENHA, CARGO, CODIGO_ACESSO, ATIVO)
+VALUES
+('Carlos Henrique', 'carlos.henrique', '123456', 'ADMINISTRADOR', NULL, 1),
+('João Pedro', 'joao.pedro', '123456', 'ARMEIRO', 'ARM001', 1),
+('Marcos Vinicius', 'marcos.vinicius', '123456', 'ARMEIRO', 'ARM002', 1),
+('Roberto Alves', 'roberto.alves', '123456', 'ARMEIRO', 'ARM003', 1),
+('Fernando Souza', 'fernando.souza', '123456', 'ADMINISTRADOR', NULL, 1),
+('Lucas Martins', 'lucas.martins', '123456', 'ARMEIRO', 'ARM004', 1),
+('Rafael Oliveira', 'rafael.oliveira', '123456', 'ARMEIRO', 'ARM005', 0);
