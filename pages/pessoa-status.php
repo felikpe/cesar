@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/proteger.php';
+require_once __DIR__ . '/../includes/perfis.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') { 
     http_response_code(405); 
@@ -21,24 +22,18 @@ $pdo = conectar();
 try {
     $pdo->beginTransaction();
 
-    // Consulta na tabela oficial ATIRADOR buscando também o NOME_GUERRA
-    $stmt = $pdo->prepare('SELECT ATIVO, NOME_GUERRA FROM ATIRADOR WHERE ID_ATIRADOR = :id FOR UPDATE');
-    $stmt->execute([':id' => $id]);
-    $atirador = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$atirador) {
-        throw new RuntimeException('Atirador não encontrado.');
-    }
+    $atirador = perfis_bloquear_ficha($pdo, $id);
 
     $ativo = (int) $atirador['ATIVO'];
     $nomeGuerra = (string) $atirador['NOME_GUERRA'];
     $novo = $ativo === 1 ? 0 : 1;
 
-    // Atualização na tabela oficial ATIRADOR
+    perfis_sincronizar_status($pdo, $atirador, $novo);
+
     $stmt = $pdo->prepare('UPDATE ATIRADOR SET ATIVO = :ativo WHERE ID_ATIRADOR = :id');
     $stmt->execute([':ativo' => $novo, ':id' => $id]);
 
-    $statusTexto = $novo ? 'Ativo' : 'Inativo';
+    $statusTexto = $novo ? 'Ativo' : 'Desativado';
 
     registrar_log(
         $pdo, 
@@ -54,7 +49,11 @@ try {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    mensagem_flash('erro', 'Não foi possível alterar a situação do atirador.');
+    if ($ex instanceof RuntimeException && !($ex instanceof PDOException) && $ex->getCode() === 403) {
+        http_response_code(403);
+        exit(e($ex->getMessage()));
+    }
+    mensagem_flash('erro', $ex instanceof RuntimeException && !($ex instanceof PDOException) ? $ex->getMessage() : 'Não foi possível alterar a situação do atirador.');
 }
 
 header('Location: pessoas.php', true, 303);

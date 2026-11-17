@@ -8,6 +8,30 @@ function e(?string $valor): string
     return htmlspecialchars((string) $valor, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+function conta_tem_acesso(PDO $pdo, $conta): bool
+{
+    if (!is_array($conta) || (int) $conta['ATIVO'] !== 1) return false;
+    if ($conta['CARGO'] === 'ADMINISTRADOR') return true;
+    if ($conta['CARGO'] !== 'ARMEIRO') return false;
+    $stmt = $pdo->prepare("SELECT ID_ATIRADOR FROM ATIRADOR WHERE ID_USUARIO = :id AND PERFIL = 'ARMEIRO' AND ATIVO = 1 LIMIT 1");
+    $stmt->execute([':id' => (int) $conta['ID_USUARIO']]);
+    return $stmt->fetchColumn() !== false;
+}
+
+function data_hora_devolucao(array $cautela): string
+{
+    if ($cautela['HORA_F'] === null) {
+        return 'Em aberto';
+    }
+
+    $dia = (string) ($cautela['DIA_F'] ?? '');
+    $hora = (string) $cautela['HORA_F'];
+
+    return $dia !== ''
+        ? date('d/m/Y', strtotime($dia)) . ' às ' . $hora
+        : 'Data não registrada, às ' . $hora;
+}
+
 function csrf_token(): string
 {
     if (!isset($_SESSION['csrf_painel'])) {
@@ -25,9 +49,36 @@ function validar_csrf(): void
     }
 }
 
-/* Preserva integralmente o comportamento existente de gravação de auditoria. */
+function acoes_auditoria(bool $somenteOperacionais = false): array
+{
+    $operacionais = [
+        'PESSOA_CADASTRADA', 'PESSOA_ATUALIZADA', 'PESSOA_REATIVADA', 'PESSOA_DESATIVADA',
+        'ATIRADOR_CADASTRADO', 'ATIRADOR_ATUALIZADO', 'ATIRADOR_REATIVADO', 'ATIRADOR_DESATIVADO', 'ATIRADOR_EXCLUIDO',
+        'CATALOGO_CADASTRADO', 'CATALOGO_ATUALIZADO',
+        'ARMA_CADASTRADA', 'ARMA_ATUALIZADA', 'ARMA_ATIVADA', 'ARMA_REATIVADA', 'ARMA_DESATIVADA', 'ARMA_EXCLUIDA',
+        'EMPRESTIMO_ARMA', 'DEVOLUCAO_ARMA', 'PRAZO_ALTERADO',
+        'CAUTELA_REGISTRADA', 'DEVOLUCAO_CAUTELA',
+    ];
+    if ($somenteOperacionais) return $operacionais;
+
+    return array_merge($operacionais, [
+        'LOGIN', 'LOGOUT', 'SENHA_ALTERADA',
+        'OPERADOR_CRIADO', 'OPERADOR_ATIVADO', 'OPERADOR_DESATIVADO',
+        'ARMEIRO_CRIADO', 'ARMEIRO_ATIVADO', 'ARMEIRO_DESATIVADO', 'ARMEIRO_ACESSO_ATUALIZADO',
+        'USUARIO_CRIADO', 'USUARIO_ATIVADO', 'USUARIO_DESATIVADO',
+        'BIOMETRIA_DISPOSITIVO_VINCULADO',
+    ]);
+}
+
+function acoes_auditoria_sql(PDO $pdo, bool $somenteOperacionais = false): string
+{
+    return implode(', ', array_map(fn(string $acao): string => $pdo->quote($acao), acoes_auditoria($somenteOperacionais)));
+}
+
 function registrar_log(PDO $pdo, ?int $autorId, string $acao, string $descricao): void
 {
+    if (!in_array($acao, acoes_auditoria(), true)) return;
+
     $sql = 'INSERT INTO LOG_SISTEMA (ID_USUARIO, ACAO, DESCRICAO, IP_ORIGEM)
             VALUES (:autor, :acao, :descricao, :ip)';
     $stmt = $pdo->prepare($sql);
@@ -60,14 +111,25 @@ function texto_auditoria(?string $texto): string
         'PESSOA_ATUALIZADA' => 'Atirador atualizado',
         'PESSOA_REATIVADA' => 'Atirador reativado',
         'PESSOA_DESATIVADA' => 'Atirador desativado',
+        'ATIRADOR_CADASTRADO' => 'Atirador cadastrado',
+        'ATIRADOR_ATUALIZADO' => 'Atirador atualizado',
+        'ATIRADOR_REATIVADO' => 'Atirador reativado',
+        'ATIRADOR_DESATIVADO' => 'Atirador desativado',
+        'ATIRADOR_EXCLUIDO' => 'Atirador excluído',
         'CATALOGO_CADASTRADO' => 'Arma cadastrada',
         'CATALOGO_ATUALIZADO' => 'Arma atualizada',
         'CATALOGO_EVENTO' => 'Evento no histórico da arma',
         'ARMA_CADASTRADA' => 'Arma cadastrada',
         'ARMA_ATUALIZADA' => 'Arma atualizada',
+        'ARMA_ATIVADA' => 'Arma ativada',
+        'ARMA_REATIVADA' => 'Arma reativada',
+        'ARMA_DESATIVADA' => 'Arma desativada',
+        'ARMA_EXCLUIDA' => 'Arma excluída',
         'ARMA_EVENTO' => 'Evento no histórico da arma',
-        'EMPRESTIMO_ARMA' => 'Empréstimo registrado',
+        'EMPRESTIMO_ARMA' => 'Cautela registrada',
         'DEVOLUCAO_ARMA' => 'Devolução registrada',
+        'CAUTELA_REGISTRADA' => 'Cautela registrada',
+        'DEVOLUCAO_CAUTELA' => 'Devolução registrada',
         'PRAZO_ALTERADO' => 'Prazo alterado',
         'OPERADOR_CRIADO' => 'Armeiro cadastrado',
         'OPERADOR_ATIVADO' => 'Armeiro ativado',
@@ -75,6 +137,11 @@ function texto_auditoria(?string $texto): string
         'ARMEIRO_CRIADO' => 'Armeiro cadastrado',
         'ARMEIRO_ATIVADO' => 'Armeiro ativado',
         'ARMEIRO_DESATIVADO' => 'Armeiro desativado',
+        'ARMEIRO_ACESSO_ATUALIZADO' => 'Acesso de armeiro atualizado',
+        'USUARIO_CRIADO' => 'Usuário cadastrado',
+        'USUARIO_ATIVADO' => 'Usuário ativado',
+        'USUARIO_DESATIVADO' => 'Usuário desativado',
+        'BIOMETRIA_DISPOSITIVO_VINCULADO' => 'Leitor biométrico vinculado',
         'FOTO_PERFIL_ATUALIZADA' => 'Foto de perfil atualizada',
         'FOTO_PERFIL_REMOVIDA' => 'Foto de perfil removida',
         'SENHA_ALTERADA' => 'Senha alterada',
@@ -91,11 +158,7 @@ function texto_auditoria(?string $texto): string
     if (preg_match('/\A[A-Z0-9_]+\z/D', $texto)) {
         return ucfirst(strtolower(str_replace('_', ' ', $texto)));
     }
-    return str_ireplace(
-        ['da pessoa ', 'a pessoa ', 'Pessoa ', 'pessoas ', 'do operador ', 'o operador ', 'Operador ', 'operadores '],
-        ['do atirador ', 'o atirador ', 'Atirador ', 'atiradores ', 'do armeiro ', 'o armeiro ', 'Armeiro ', 'armeiros '],
-        $texto
-    );
+    return $texto;
 }
 
 /** Consulta apenas o nome atual dos cadastros. Nunca altera os dados auditados. */
@@ -119,13 +182,13 @@ function auditoria_nome_atual(PDO $pdo, string $entidade, int $id): ?string
     return $cache[$chave];
 }
 
-/** Detalhes de um empréstimo já registrado, somente para consulta administrativa. */
 function auditoria_dados_registro(PDO $pdo, int $id): ?array
 {
     if ($id < 1) return null;
     static $cache = [];
     if (array_key_exists($id, $cache)) return $cache[$id];
-    $stmt = $pdo->prepare('SELECT A.SERIAL AS SERIE, T.NOME AS ATIRADOR
+    $stmt = $pdo->prepare('SELECT A.SERIAL AS SERIE, T.NOME AS ATIRADOR,
+        C.COM_ALTERACAO, C.DESCRICAO_DEVOLUCAO
         FROM CAUTELA C
         JOIN ARMAMENTO A ON A.ID_ARMAMENTO = C.ID_ARMAMENTO
         JOIN ATIRADOR T ON T.ID_ATIRADOR = C.ID_ATIRADOR
@@ -142,17 +205,25 @@ function auditoria_dados_registro(PDO $pdo, int $id): ?array
  */
 function descricao_log_visivel(PDO $pdo, string $acao, ?string $descricao): string
 {
-    $original = texto_auditoria($descricao);
+    $original = (string) $descricao;
+    if (in_array($acao, ['ARMA_EXCLUIDA', 'ATIRADOR_EXCLUIDO'], true)) return $original;
 
     $cadastros = [
         'PESSOA_CADASTRADA' => ['atirador', 'Atirador', 'cadastrado'],
         'PESSOA_ATUALIZADA' => ['atirador', 'Atirador', 'atualizado'],
         'PESSOA_REATIVADA' => ['atirador', 'Atirador', 'reativado'],
         'PESSOA_DESATIVADA' => ['atirador', 'Atirador', 'desativado'],
+        'ATIRADOR_CADASTRADO' => ['atirador', 'Atirador', 'cadastrado'],
+        'ATIRADOR_ATUALIZADO' => ['atirador', 'Atirador', 'atualizado'],
+        'ATIRADOR_REATIVADO' => ['atirador', 'Atirador', 'reativado'],
+        'ATIRADOR_DESATIVADO' => ['atirador', 'Atirador', 'desativado'],
         'CATALOGO_CADASTRADO' => ['arma', 'Arma', 'cadastrada'],
         'CATALOGO_ATUALIZADO' => ['arma', 'Arma', 'atualizada'],
         'ARMA_CADASTRADA' => ['arma', 'Arma', 'cadastrada'],
         'ARMA_ATUALIZADA' => ['arma', 'Arma', 'atualizada'],
+        'ARMA_ATIVADA' => ['arma', 'Arma', 'ativada'],
+        'ARMA_REATIVADA' => ['arma', 'Arma', 'reativada'],
+        'ARMA_DESATIVADA' => ['arma', 'Arma', 'desativada'],
         'OPERADOR_CRIADO' => ['armeiro', 'Armeiro', 'cadastrado'],
         'OPERADOR_ATIVADO' => ['armeiro', 'Armeiro', 'ativado'],
         'OPERADOR_DESATIVADO' => ['armeiro', 'Armeiro', 'desativado'],
@@ -172,15 +243,18 @@ function descricao_log_visivel(PDO $pdo, string $acao, ?string $descricao): stri
         return $original;
     }
 
-    if (in_array($acao, ['EMPRESTIMO_ARMA', 'DEVOLUCAO_ARMA', 'PRAZO_ALTERADO'], true)) {
-        if (!preg_match('/empr[eé]stimo\s*#(\d+)\b/ui', $original, $m)) return $original;
+    if (in_array($acao, ['EMPRESTIMO_ARMA', 'DEVOLUCAO_ARMA', 'PRAZO_ALTERADO', 'CAUTELA_REGISTRADA', 'DEVOLUCAO_CAUTELA'], true)) {
+        if (!preg_match('/(?:empr[eé]stimo|cautela)\s*#(\d+)\b/ui', $original, $m)) return $original;
         $id = (int) $m[1];
         $dados = auditoria_dados_registro($pdo, $id);
         if (!$dados) return 'Registro de movimentação de ID ' . $id . ' não encontrado; consulte o histórico original.';
         $referencia = 'arma ' . (string) $dados['SERIE'] . ' — atirador ' . (string) $dados['ATIRADOR'];
+        $alteracao = (int) $dados['COM_ALTERACAO'] === 1
+            ? ' Com alteração' . (trim((string) $dados['DESCRICAO_DEVOLUCAO']) !== '' ? ': ' . trim((string) $dados['DESCRICAO_DEVOLUCAO']) : '.')
+            : '';
         return match ($acao) {
-            'EMPRESTIMO_ARMA' => 'Empréstimo registrado: ' . $referencia . '.',
-            'DEVOLUCAO_ARMA' => 'Devolução registrada: ' . $referencia . '.',
+            'EMPRESTIMO_ARMA', 'CAUTELA_REGISTRADA' => 'Cautela registrada: ' . $referencia . '.',
+            'DEVOLUCAO_ARMA', 'DEVOLUCAO_CAUTELA' => 'Devolução registrada: ' . $referencia . '.' . $alteracao,
             default => 'Prazo de devolução alterado: ' . $referencia . '.',
         };
     }

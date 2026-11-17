@@ -10,6 +10,11 @@ $flash = recuperar_flash();
 // Paginação e filtros
 $busca = trim((string) ($_GET['busca'] ?? ''));
 $filtroStatus = (string) ($_GET['status'] ?? 'abertos'); // abertos, devolvidos, todos
+if (!in_array($filtroStatus, ['abertos', 'devolvidos', 'todos'], true)) {
+    $filtroStatus = 'abertos';
+}
+$pagina = max(1, (int) ($_GET['pagina'] ?? 1));
+$limite = 20;
 
 // Montagem da query utilizando a tabela oficial CAUTELA
 $sqlBase = 'FROM CAUTELA C
@@ -27,21 +32,29 @@ if ($busca !== '') {
 }
 
 if ($filtroStatus === 'abertos') {
-    $sqlBase .= ' AND (C.HORA_F IS NULL OR C.HORA_F = "00:00:00")';
+    $sqlBase .= ' AND C.HORA_F IS NULL';
 } elseif ($filtroStatus === 'devolvidos') {
-    $sqlBase .= ' AND (C.HORA_F IS NOT NULL AND C.HORA_F <> "00:00:00")';
+    $sqlBase .= ' AND C.HORA_F IS NOT NULL';
 }
 
 // Contagem total
 $stmtCount = $pdo->prepare("SELECT COUNT(*) " . $sqlBase);
 $stmtCount->execute($params);
 $totalRegistros = (int) $stmtCount->fetchColumn();
+$paginas = max(1, (int) ceil($totalRegistros / $limite));
+$pagina = min($pagina, $paginas);
 
 // Busca os registros ordenados por data/hora mais recente
-$sql = "SELECT C.*, A.SERIAL, A.MODELO, T.NOME AS ATIRADOR_NOME, T.NOME_GUERRA, T.RA " . $sqlBase . " ORDER BY C.DIA DESC, C.HORA_I DESC LIMIT 100";
+$sql = "SELECT C.*, A.SERIAL, A.MODELO, T.NOME AS ATIRADOR_NOME, T.NOME_GUERRA, T.RA " . $sqlBase . " ORDER BY C.DIA DESC, C.HORA_I DESC, C.ID_CAUTELA DESC LIMIT :limite OFFSET :offset";
 $stmt = $pdo->prepare($sql);
-$stmt->execute($params);
+foreach ($params as $campo => $valor) {
+    $stmt->bindValue($campo, $valor, PDO::PARAM_STR);
+}
+$stmt->bindValue(':limite', $limite, PDO::PARAM_INT);
+$stmt->bindValue(':offset', ($pagina - 1) * $limite, PDO::PARAM_INT);
+$stmt->execute();
 $cautelas = $stmt->fetchAll();
+$filtros = ['busca' => $busca, 'status' => $filtroStatus];
 
 abrir_painel('Gerenciamento de Cautelas', 'emprestimos');
 ?>
@@ -109,7 +122,7 @@ abrir_painel('Gerenciamento de Cautelas', 'emprestimos');
         </thead>
         <tbody>
           <?php foreach ($cautelas as $c): ?>
-            <?php $aberta = ($c['HORA_F'] === null || $c['HORA_F'] === '00:00:00'); ?>
+            <?php $aberta = $c['HORA_F'] === null; ?>
             <tr>
               <td>#<?= (int) $c['ID_CAUTELA'] ?></td>
               <td>
@@ -127,7 +140,7 @@ abrir_painel('Gerenciamento de Cautelas', 'emprestimos');
                 <?php if ($aberta): ?>
                   <span class="estado estado-alerta">Em uso</span>
                 <?php else: ?>
-                  <span class="estado estado-ativo">Devolvida (<?= e($c['HORA_F']) ?>)</span>
+                  <span class="estado estado-ativo">Devolvida (<?= e(data_hora_devolucao($c)) ?>)</span>
                   <?php if ((int) $c['COM_ALTERACAO'] === 1): ?>
                     <span class="estado estado-inativo" style="display: inline-block; margin-top: 3px;" title="<?= e($c['DESCRICAO_DEVOLUCAO']) ?>">
                       Com alteração
@@ -146,6 +159,13 @@ abrir_painel('Gerenciamento de Cautelas', 'emprestimos');
       </table>
     </div>
   <?php endif; ?>
+  <nav class="paginacao" aria-label="Páginas das cautelas">
+    <span>Página <?= $pagina ?> de <?= $paginas ?></span>
+    <div>
+      <?php if ($pagina > 1): ?><a href="?<?= e(http_build_query($filtros + ['pagina' => $pagina - 1])) ?>">← Anterior</a><?php endif; ?>
+      <?php if ($pagina < $paginas): ?><a href="?<?= e(http_build_query($filtros + ['pagina' => $pagina + 1])) ?>">Próxima →</a><?php endif; ?>
+    </div>
+  </nav>
 </div>
 
 <?php fechar_painel(); ?>

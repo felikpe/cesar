@@ -4,8 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/proteger.php';
 require_once __DIR__ . '/../includes/layout.php';
 
-// Filtros de status baseados no campo DISPONIBILIDADE (1 = Disponível, 0 = Cautelada/Indisponível)
-$statusPermitidos = ['todos', 'disponivel', 'cautelada'];
+$statusPermitidos = ['todos', 'disponivel', 'cautelada', 'desativada'];
 $q = trim((string) ($_GET['q'] ?? ''));
 if (strlen($q) > 100) {
     $q = substr($q, 0, 100);
@@ -30,9 +29,13 @@ if ($q !== '') {
 }
 
 if ($status === 'disponivel') {
+    $where[] = 'A.ATIVO = 1';
     $where[] = 'A.DISPONIBILIDADE = 1';
+    $where[] = 'NOT EXISTS (SELECT 1 FROM CAUTELA C WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL)';
 } elseif ($status === 'cautelada') {
-    $where[] = 'A.DISPONIBILIDADE = 0';
+    $where[] = 'EXISTS (SELECT 1 FROM CAUTELA C WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL)';
+} elseif ($status === 'desativada') {
+    $where[] = 'A.ATIVO = 0';
 }
 
 $sqlWhere = $where ? ' WHERE ' . implode(' AND ', $where) : '';
@@ -47,14 +50,14 @@ $paginas = max(1, (int) ceil($total / $limite));
 $pagina = min($pagina, $paginas);
 $offset = ($pagina - 1) * $limite;
 
-// Consulta ajustada para usar a tabela CAUTELA (onde HORA_F IS NULL indica cautela em aberto)
-$stmt = $pdo->prepare('SELECT A.ID_ARMAMENTO, A.SERIAL, A.MODELO, A.DISPONIBILIDADE,
-        C.ID_CAUTELA AS EMPRESTIMO_ABERTO
-    FROM ARMAMENTO A
-    LEFT JOIN CAUTELA C
-      ON C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL'
+$stmt = $pdo->prepare('SELECT A.ID_ARMAMENTO, A.SERIAL, A.MODELO, A.DISPONIBILIDADE, A.ATIVO,
+        (SELECT MIN(C.ID_CAUTELA) FROM CAUTELA C
+          WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL) AS EMPRESTIMO_ABERTO,
+        (SELECT COUNT(*) FROM CAUTELA H WHERE H.ID_ARMAMENTO = A.ID_ARMAMENTO) AS TOTAL_CAUTELAS
+    FROM ARMAMENTO A'
     . $sqlWhere .
-    ' ORDER BY A.ID_ARMAMENTO DESC LIMIT :limite OFFSET :offset');
+    " ORDER BY A.ATIVO DESC, CASE WHEN A.MODELO = 'PRESSAO' THEN 1 ELSE 0 END ASC,
+        A.ID_ARMAMENTO DESC LIMIT :limite OFFSET :offset");
 
 foreach ($params as $k => $v) {
     $stmt->bindValue($k, $v, PDO::PARAM_STR);
@@ -96,6 +99,7 @@ abrir_painel('Armas', 'armas');
       <option value="todos">Todos os status</option>
       <option value="disponivel" <?= $status === 'disponivel' ? 'selected' : '' ?>>Disponível no Paiol</option>
       <option value="cautelada" <?= $status === 'cautelada' ? 'selected' : '' ?>>Cautelada / Em Uso</option>
+      <option value="desativada" <?= $status === 'desativada' ? 'selected' : '' ?>>Desativadas</option>
     </select>
     <button type="submit" class="botao-secundario">Buscar</button>
     <?php if ($q !== '' || $status !== 'todos'): ?>
@@ -121,21 +125,32 @@ abrir_painel('Armas', 'armas');
             </td>
             <td><?= e($item['MODELO'] ?: 'Não informado') ?></td>
             <td>
-              <?php if ((int) $item['DISPONIBILIDADE'] === 1): ?>
+              <?php if (!empty($item['EMPRESTIMO_ABERTO'])): ?>
+                <span class="estado estado-alerta">Cautelada</span>
+              <?php elseif ((int) $item['ATIVO'] === 0): ?>
+                <span class="estado estado-inativo">Desativada</span>
+              <?php elseif ((int) $item['DISPONIBILIDADE'] === 1): ?>
                 <span class="estado estado-ativo">Disponível</span>
               <?php else: ?>
-                <span class="estado estado-alerta">Cautelada</span>
+                <span class="estado estado-alerta">Indisponível</span>
               <?php endif; ?>
             </td>
             <td style="text-align: right;">
               <div class="acoes-linha" style="display: inline-flex; gap: 6px;">
-                <?php if ((int) $item['DISPONIBILIDADE'] === 1): ?>
-                  <a class="botao-linha" href="emprestimo-form.php?armamento=<?= (int) $item['ID_ARMAMENTO'] ?>">Cautelar</a>
-                <?php elseif (!empty($item['EMPRESTIMO_ABERTO'])): ?>
+                <?php if (!empty($item['EMPRESTIMO_ABERTO'])): ?>
                   <a class="botao-linha" href="emprestimo-form.php?id=<?= (int) $item['EMPRESTIMO_ABERTO'] ?>">Gerenciar</a>
+                <?php elseif ((int) $item['ATIVO'] === 1 && (int) $item['DISPONIBILIDADE'] === 1): ?>
+                  <a class="botao-linha" href="emprestimo-form.php?armamento=<?= (int) $item['ID_ARMAMENTO'] ?>">Cautelar</a>
                 <?php endif; ?>
-                <a class="botao-linha" href="emprestimos.php?busca=<?= urlencode($item['SERIAL']) ?>">Histórico</a>
+                <a class="botao-linha" href="emprestimos.php?busca=<?= urlencode($item['SERIAL']) ?>&amp;status=todos">Histórico</a>
                 <a class="botao-linha" href="catalogo-form.php?id=<?= (int) $item['ID_ARMAMENTO'] ?>">Editar</a>
+                <?php if ((int) $item['TOTAL_CAUTELAS'] === 0): ?>
+                  <form method="post" action="catalogo-excluir.php" onsubmit="return window.confirm('Excluir esta arma? O vínculo de armamento principal dos atiradores será removido.');">
+                    <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="id" value="<?= (int) $item['ID_ARMAMENTO'] ?>">
+                    <button class="botao-linha" type="submit">Excluir</button>
+                  </form>
+                <?php endif; ?>
               </div>
             </td>
           </tr>

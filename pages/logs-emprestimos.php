@@ -35,8 +35,8 @@ if ($armeiro) {
     $condicoes[] = '(C.ID_USUARIO = :arm_entrega)';
     $parametros[':arm_entrega'] = $armeiro;
 }
-if ($situacao === 'em_aberto') $condicoes[] = '(C.HORA_F IS NULL OR C.HORA_F = "00:00:00")';
-if ($situacao === 'devolvidos') $condicoes[] = '(C.HORA_F IS NOT NULL AND C.HORA_F <> "00:00:00")';
+if ($situacao === 'em_aberto') $condicoes[] = 'C.HORA_F IS NULL';
+if ($situacao === 'devolvidos') $condicoes[] = 'C.HORA_F IS NOT NULL';
 
 if ($q !== '') {
     $literal = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $q);
@@ -67,7 +67,7 @@ $paginas = max(1, (int) ceil($total / $limite));
 $pagina = min($pagina, $paginas);
 
 $consulta = $pdo->prepare('SELECT C.ID_CAUTELA, C.DIA, C.HORA_I,
-    C.HORA_F, C.COM_ALTERACAO, C.DESCRICAO_DEVOLUCAO,
+    C.HORA_F, C.DIA_F, C.COM_ALTERACAO, C.DESCRICAO_DEVOLUCAO,
     ATR.ID_ATIRADOR, ATR.NOME AS NOME_ATIRADOR, ATR.RA,
     A.SERIAL, A.MODELO,
     U.NOME AS NOME_ARMEIRO'
@@ -84,20 +84,20 @@ $emprestimos = $consulta->fetchAll();
 
 // Os filtros são mantidos ao trocar de página.
 $filtros = ['q' => $q, 'atirador' => $atirador, 'armeiro' => $armeiro, 'situacao' => $situacao];
-abrir_painel('Logs do sistema', 'logs');
+abrir_painel('Auditoria do sistema', 'logs');
 ?>
 <div class="cabecalho-pagina">
-  <div><div class="sobretitulo">Auditoria</div><h1>Logs do sistema</h1><p>Consulta de atividades e cautelas.</p></div>
+  <div><div class="sobretitulo">Auditoria</div><h1>Auditoria do sistema</h1><p>Consulta de atividades e cautelas.</p></div>
 </div>
-<nav class="acoes-pessoa" aria-label="Seções dos logs" style="margin-bottom: 16px; gap: 10px;">
+<nav class="acoes-pessoa" aria-label="Seções da auditoria" style="margin-bottom: 16px; gap: 10px;">
   <a class="botao-linha" href="logs.php">Atividades</a>
-  <a class="botao-primario" href="logs-emprestimos.php" aria-current="page">Empréstimos</a>
+  <a class="botao-primario" href="logs-emprestimos.php" aria-current="page">Cautelas</a>
 </nav>
 <section class="painel-card">
-  <div class="cartao-topo"><div><h2>Histórico de empréstimos</h2><p><?= $total ?> registro(s) encontrado(s)</p></div></div>
+  <div class="cartao-topo"><div><h2>Histórico de cautelas</h2><p><?= $total ?> registro(s) encontrado(s)</p></div></div>
   <form class="filtros" method="get" action="logs-emprestimos.php">
     <input type="search" name="q" maxlength="100" value="<?= e($q) ?>"
-        placeholder="Pesquisar atirador, armeiro ou arma" aria-label="Pesquisar empréstimos">
+        placeholder="Pesquisar atirador, armeiro ou arma" aria-label="Pesquisar cautelas">
     <select name="atirador" aria-label="Filtrar por atirador" onchange="this.form.submit()">
       <option value="0">Todos os atiradores</option>
       <?php foreach ($listaAtiradores as $pessoa): ?>
@@ -111,7 +111,7 @@ abrir_painel('Logs do sistema', 'logs');
       <?php endforeach; ?>
     </select>
     <select name="situacao" aria-label="Filtrar por situação" onchange="this.form.submit()">
-      <option value="todos" <?= $situacao === 'todos' ? 'selected' : '' ?>>Todos os empréstimos</option>
+      <option value="todos" <?= $situacao === 'todos' ? 'selected' : '' ?>>Todas as cautelas</option>
       <option value="em_aberto" <?= $situacao === 'em_aberto' ? 'selected' : '' ?>>Em aberto</option>
       <option value="devolvidos" <?= $situacao === 'devolvidos' ? 'selected' : '' ?>>Devolvidos</option>
     </select>
@@ -121,10 +121,10 @@ abrir_painel('Logs do sistema', 'logs');
 
   <div class="tabela-scroll">
     <table class="tabela">
-      <thead><tr><th>Empréstimo</th><th>Atirador</th><th>Arma</th><th>Armeiro responsável</th><th>Devolução</th></tr></thead>
+      <thead><tr><th>Cautela</th><th>Atirador</th><th>Arma</th><th>Armeiro responsável</th><th>Devolução</th><th>Ações</th></tr></thead>
       <tbody>
       <?php foreach ($emprestimos as $registro): ?>
-        <?php $aberta = ($registro['HORA_F'] === null || $registro['HORA_F'] === '00:00:00'); ?>
+        <?php $aberta = $registro['HORA_F'] === null; ?>
         <tr>
           <td><strong><?= e(date('d/m/Y', strtotime($registro['DIA'])) . ' às ' . $registro['HORA_I']) ?></strong></td>
           <td><strong><?= e($registro['NOME_ATIRADOR']) ?></strong><span>RA: <?= e($registro['RA']) ?></span></td>
@@ -133,7 +133,7 @@ abrir_painel('Logs do sistema', 'logs');
           <td>
             <?php if (!$aberta): ?>
               <span class="estado estado-ativo">Devolvido</span>
-              <span>Às <?= e($registro['HORA_F']) ?></span>
+              <span><?= e(data_hora_devolucao($registro)) ?></span>
               <?php if ((int) $registro['COM_ALTERACAO'] === 1): ?>
                 <br><small style="color: #721c24;" title="<?= e($registro['DESCRICAO_DEVOLUCAO']) ?>">Com alteração</small>
               <?php endif; ?>
@@ -141,9 +141,10 @@ abrir_painel('Logs do sistema', 'logs');
               <span class="estado estado-alerta">Em aberto</span>
             <?php endif; ?>
           </td>
+          <td><a class="botao-linha" href="emprestimo-form.php?<?= e(http_build_query(['id' => (int) $registro['ID_CAUTELA'], 'origem' => 'auditoria'] + $filtros + ['pagina' => $pagina])) ?>">Ver Detalhes</a></td>
         </tr>
       <?php endforeach; ?>
-      <?php if (!$emprestimos): ?><tr><td colspan="5" class="vazio">Nenhum empréstimo encontrado.</td></tr><?php endif; ?>
+      <?php if (!$emprestimos): ?><tr><td colspan="6" class="vazio">Nenhuma cautela encontrada.</td></tr><?php endif; ?>
       </tbody>
     </table>
   </div>

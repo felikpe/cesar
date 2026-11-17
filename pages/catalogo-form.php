@@ -16,11 +16,17 @@ $item = [
     'SERIAL' => '', 
     'MODELO' => 'MOSQUEFAL', 
     'CONDICAO' => '', 
-    'DISPONIBILIDADE' => 1
+    'DISPONIBILIDADE' => 1,
+    'ATIVO' => 1,
+    'EMPRESTIMO_ABERTO' => null,
+    'TOTAL_CAUTELAS' => 0
 ];
 
 if ($id > 0) {
-    $stmt = conectar()->prepare('SELECT ID_ARMAMENTO, SERIAL, MODELO, CONDICAO, DISPONIBILIDADE FROM ARMAMENTO WHERE ID_ARMAMENTO = :id');
+    $stmt = conectar()->prepare('SELECT A.ID_ARMAMENTO, A.SERIAL, A.MODELO, A.CONDICAO, A.DISPONIBILIDADE, A.ATIVO,
+        (SELECT MIN(C.ID_CAUTELA) FROM CAUTELA C WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL) AS EMPRESTIMO_ABERTO,
+        (SELECT COUNT(*) FROM CAUTELA H WHERE H.ID_ARMAMENTO = A.ID_ARMAMENTO) AS TOTAL_CAUTELAS
+        FROM ARMAMENTO A WHERE A.ID_ARMAMENTO = :id');
     $stmt->execute([':id' => $id]);
     $item = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -56,7 +62,7 @@ abrir_painel($titulo, 'armas');
       <input type="hidden" name="id" value="<?= (int)$item['ID_ARMAMENTO'] ?>">
 
       <label for="serial">Número de Série (Exatamente 5 caracteres) *</label>
-      <input id="serial" name="serial" type="text" minlength="5" maxlength="5" required value="<?= e($item['SERIAL']) ?>" placeholder="Ex: A1234">
+      <input id="serial" name="serial" type="text" minlength="5" maxlength="5" required value="<?= e($item['SERIAL']) ?>" placeholder="Ex: 01234">
 
       <label for="modelo">Modelo *</label>
       <select id="modelo" name="modelo" required>
@@ -67,8 +73,14 @@ abrir_painel($titulo, 'armas');
       <label for="condicao">Condição / Observação</label>
       <input id="condicao" name="condicao" maxlength="250" value="<?= e($item['CONDICAO']) ?>" placeholder="Ex: Bom estado, com arranhões leves">
 
-
-      <small>O status indica se a arma está pronta para novo empréstimo ou já cautelada.</small>
+      <?php if ($id): ?>
+        <label for="ativo">Situação do cadastro</label>
+        <select id="ativo" name="ativo" required>
+          <option value="1" <?= (int) $item['ATIVO'] === 1 ? 'selected' : '' ?>>Ativa</option>
+          <option value="0" <?= (int) $item['ATIVO'] === 0 ? 'selected' : '' ?> <?= !empty($item['EMPRESTIMO_ABERTO']) ? 'disabled' : '' ?>>Desativada</option>
+        </select>
+        <small><?= !empty($item['EMPRESTIMO_ABERTO']) ? 'Registre a devolução antes de desativar esta arma.' : 'Armas desativadas permanecem no histórico e não podem ser cauteladas.' ?></small>
+      <?php endif; ?>
 
       <button class="botao-primario" type="submit" style="margin-top: 20px;">Salvar Arma</button>
     </form>
@@ -76,10 +88,19 @@ abrir_painel($titulo, 'armas');
 
   <aside class="painel-card painel-card-info">
     <h3>Informações</h3>
-    <p><strong>Status atual:</strong> <?= (int)$item['DISPONIBILIDADE'] === 1 ? 'Disponível' : 'Cautelada' ?></p>
+    <p><strong>Status atual:</strong> <?= !empty($item['EMPRESTIMO_ABERTO']) ? 'Cautelada' : ((int) $item['ATIVO'] === 0 ? 'Desativada' : ((int) $item['DISPONIBILIDADE'] === 1 ? 'Disponível' : 'Indisponível')) ?></p>
     <p><small>O número de série deve conter exatamente 5 caracteres alfanuméricos e ser único no sistema.</small></p>
     <?php if ($id): ?>
-        <p><a class="link-discreto" href="emprestimos.php?busca=<?= urlencode($item['SERIAL']) ?>">Abrir histórico →</a></p>
+        <p><a class="link-discreto" href="emprestimos.php?busca=<?= urlencode($item['SERIAL']) ?>&amp;status=todos">Abrir histórico →</a></p>
+        <?php if ((int) $item['TOTAL_CAUTELAS'] === 0): ?>
+          <form method="post" action="catalogo-excluir.php" onsubmit="return window.confirm('Excluir esta arma? O vínculo de armamento principal dos atiradores será removido.');">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="id" value="<?= (int) $item['ID_ARMAMENTO'] ?>">
+            <button class="botao-linha" type="submit">Excluir arma</button>
+          </form>
+        <?php else: ?>
+          <p><small>Esta arma possui histórico e pode ser desativada, mas não excluída.</small></p>
+        <?php endif; ?>
     <?php endif; ?>
   </aside>
 </div>

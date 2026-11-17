@@ -2,9 +2,25 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../includes/proteger.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/biometria-painel.php';
 
 $pdo = conectar();
 $id = filter_var($_GET['id'] ?? '0', FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) ?: 0;
+$origemAuditoria = ($_GET['origem'] ?? '') === 'auditoria';
+$voltar = 'emprestimos.php';
+if ($origemAuditoria) {
+    exigir_admin();
+    if ($id < 1) {
+        http_response_code(400);
+        exit('Cautela inválida.');
+    }
+    $filtrosAuditoria = [];
+    foreach (['q', 'atirador', 'armeiro', 'situacao', 'pagina'] as $campo) {
+        $valor = $_GET[$campo] ?? null;
+        if (is_string($valor) && strlen($valor) <= 100) $filtrosAuditoria[$campo] = $valor;
+    }
+    $voltar = 'logs-emprestimos.php' . ($filtrosAuditoria ? '?' . http_build_query($filtrosAuditoria) : '');
+}
 $armamentoPreSelecionado = filter_var($_GET['armamento'] ?? '0', FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]) ?: 0;
 $flash = recuperar_flash();
 $registro = null;
@@ -27,7 +43,11 @@ $pessoas = $pdo->query('SELECT ID_ATIRADOR, NOME, NOME_GUERRA, RA FROM ATIRADOR 
 if ($id === 0) {
     $sql = "SELECT A.ID_ARMAMENTO, A.SERIAL, A.MODELO
         FROM ARMAMENTO A
-        WHERE A.DISPONIBILIDADE = 1
+        WHERE A.DISPONIBILIDADE = 1 AND A.ATIVO = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM CAUTELA C
+              WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL
+          )
         ORDER BY A.SERIAL";
     $armas = $pdo->query($sql)->fetchAll();
 } else {
@@ -37,16 +57,16 @@ if ($id === 0) {
     $armas = $stmt->fetchAll();
 }
 
-$titulo = $id > 0 ? 'Gerenciar Cautela' : 'Nova Cautela';
-abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
+$titulo = $origemAuditoria ? 'Detalhes da Cautela' : ($id > 0 ? 'Gerenciar Cautela' : 'Nova Cautela');
+abrir_painel($titulo, $origemAuditoria ? 'logs' : ($id > 0 ? 'emprestimos' : 'novo_emprestimo'));
 ?>
 <div class="cabecalho-pagina">
   <div>
     <div class="sobretitulo">Movimentação</div>
     <h1><?= e($titulo) ?></h1>
-    <p><?= $id > 0 ? 'Detalhes da cautela e registro de devolução.' : 'Selecione o armamento e o atirador ativo.' ?></p>
+    <p><?= $origemAuditoria ? 'Consulta dos dados e da devolução da cautela.' : ($id > 0 ? 'Detalhes da cautela e registro de devolução.' : 'Selecione o armamento e o atirador ativo.') ?></p>
   </div>
-  <a class="botao-voltar" href="emprestimos.php">← Voltar</a>
+  <a class="botao-voltar" href="<?= e($voltar) ?>">← Voltar</a>
 </div>
 
 <?php if ($flash): ?>
@@ -71,14 +91,17 @@ abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
         </select>
 
         <label for="id_pessoa">Atirador *</label>
-        <select id="id_pessoa" name="id_pessoa" required>
-          <option value="">Selecione o atirador</option>
-          <?php foreach ($pessoas as $pessoa): ?>
-            <option value="<?= (int) $pessoa['ID_ATIRADOR'] ?>">
-              <?= e($pessoa['NOME_GUERRA'] . ' - ' . $pessoa['NOME'] . ' (RA: ' . $pessoa['RA'] . ')') ?>
-            </option>
-          <?php endforeach; ?>
-        </select>
+        <div class="biometria-campo">
+          <select id="id_pessoa" name="id_pessoa" required>
+            <option value="">Selecione o atirador</option>
+            <?php foreach ($pessoas as $pessoa): ?>
+              <option value="<?= (int) $pessoa['ID_ATIRADOR'] ?>">
+                <?= e($pessoa['NOME_GUERRA'] . ' - ' . $pessoa['NOME'] . ' (RA: ' . $pessoa['RA'] . ')') ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+          <?php botao_biometria('identificar', 0, null, 'Identificar atirador pela digital'); ?>
+        </div>
 
         <label for="missao">Missão / Motivo</label>
         <input id="missao" name="missao" type="text" maxlength="150" placeholder="Ex.: Guarda ao Quartel, Instrução de Tiro" value="Instrução / Rotina">
@@ -89,7 +112,7 @@ abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
         <button class="botao-primario" type="submit" style="margin-top: 15px;">Registrar Cautela</button>
       </form>
     <?php else: ?>
-      <?php $aberto = ($registro['HORA_F'] === null || $registro['HORA_F'] === '00:00:00'); ?>
+      <?php $aberto = $registro['HORA_F'] === null; ?>
       
       <div class="form-painel">
         <label>Arma</label>
@@ -110,7 +133,7 @@ abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
         <?php endif; ?>
       </div>
 
-      <?php if ($aberto): ?>
+      <?php if ($aberto && !$origemAuditoria): ?>
         <hr style="border:0;border-top:1px solid #dde3da;margin:24px 0;">
         <h3>Registrar Devolução</h3>
         <form method="post" action="emprestimo-salvar.php" class="form-painel" onsubmit="return window.confirm('Confirmar a devolução deste armamento?');">
@@ -128,13 +151,16 @@ abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
           <label for="descricao_devolucao">Observações / Descrição da Alteração</label>
           <textarea id="descricao_devolucao" name="descricao_devolucao" rows="3" maxlength="255" placeholder="Caso haja alteração ou avaria no armamento, descreva detalhadamente."></textarea>
 
-          <button class="botao-secundario" type="submit" style="margin-top: 15px;">Confirmar Devolução</button>
+          <div class="biometria-acao-form" style="margin-top: 15px;">
+            <button class="botao-secundario" type="submit">Confirmar Devolução</button>
+            <?php botao_biometria('identificar', (int) $registro['ID_ATIRADOR'], null, 'Conferir digital para devolução', (string) ($registro['NOME_GUERRA'] ?: $registro['ATIRADOR_NOME'])); ?>
+          </div>
         </form>
-      <?php else: ?>
+      <?php elseif (!$aberto): ?>
         <hr style="border:0;border-top:1px solid #dde3da;margin:24px 0;">
         <div class="form-painel">
-          <label>Horário de Devolução</label>
-          <input type="text" value="<?= e($registro['HORA_F']) ?>" readonly>
+          <label>Data e Hora de Devolução</label>
+          <input type="text" value="<?= e(data_hora_devolucao($registro)) ?>" readonly>
 
           <label>Situação da Devolução</label>
           <input type="text" value="<?= (int) $registro['COM_ALTERACAO'] === 1 ? 'Com Alteração / Avaria' : 'Sem Alteração' ?>" readonly>
@@ -159,13 +185,13 @@ abrir_painel($titulo, $id > 0 ? 'emprestimos' : 'novo_emprestimo');
       <p><strong>Situação:</strong> <?= $aberto ? 'Em uso (Cautelada)' : 'Devolvida ao Paiol' ?></p>
       <p><strong>Data de Saída:</strong> <?= e(date('d/m/Y', strtotime($registro['DIA']))) ?> às <?= e($registro['HORA_I']) ?></p>
       <?php if (!$aberto): ?>
-        <p><strong>Devolvida às:</strong> <?= e($registro['HORA_F']) ?></p>
+        <p><strong>Devolvida:</strong> <?= e(data_hora_devolucao($registro)) ?></p>
         <?php if ((int) $registro['COM_ALTERACAO'] === 1): ?>
           <p style="color: #c53030;"><strong>Atenção:</strong> Devolução com alteração registrada.</p>
         <?php endif; ?>
       <?php endif; ?>
       <p style="margin-top: 15px;">
-        <a class="link-discreto" href="emprestimos.php?busca=<?= urlencode($registro['SERIAL']) ?>">Histórico desta arma →</a>
+        <a class="link-discreto" href="emprestimos.php?busca=<?= urlencode($registro['SERIAL']) ?>&amp;status=todos">Histórico desta arma →</a>
       </p>
     <?php endif; ?>
   </aside>

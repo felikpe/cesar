@@ -4,16 +4,18 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/funcoes.php';
 require_once __DIR__ . '/../config/database.php';
 
-// Se a saída for disparada pelo botão "Sair" do menu (POST com CSRF)
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['csrf_token']) && hash_equals(csrf_token(), (string)$_POST['csrf_token'])) {
-        if (!empty($_SESSION['id_usuario'])) {
-            try {
-                registrar_log(conectar(), (int) $_SESSION['id_usuario'], 'LOGOUT', 'Sessão encerrada pelo usuário.');
-            } catch (Throwable $e) {
-                // Log não impede o logout
-            }
-        }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Allow: POST');
+    http_response_code(405);
+    exit('Método não permitido.');
+}
+
+validar_csrf();
+
+if (!empty($_SESSION['id_usuario'])) {
+    try {
+        registrar_log(conectar(), (int) $_SESSION['id_usuario'], 'LOGOUT', 'Sessão encerrada pelo usuário.');
+    } catch (Throwable $e) {
     }
 }
 

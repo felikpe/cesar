@@ -16,9 +16,9 @@ try {
         $idArmamento = filter_var($_POST['id_armamento'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $idPessoa = filter_var($_POST['id_pessoa'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         
-        // Separando data e hora conforme a estrutura da tabela CAUTELA (DIA, HORA_I)
-        $dia = date('Y-m-d');
-        $horaInicio = date('H:i:s');
+        $agora = new DateTimeImmutable();
+        $dia = $agora->format('Y-m-d');
+        $horaInicio = $agora->format('H:i:s');
         
         $missao = trim((string) ($_POST['missao'] ?? 'Instrução / Rotina'));
         $acessorios = trim((string) ($_POST['acessorios'] ?? ''));
@@ -27,29 +27,35 @@ try {
             throw new RuntimeException('Preencha os dados da cautela corretamente.');
         }
 
+        if (preg_match('/\A.{0,150}\z/usD', $missao) !== 1 || preg_match('/\A.{0,255}\z/usD', $acessorios) !== 1) {
+            throw new RuntimeException('A missão deve ter até 150 caracteres e os acessórios até 255.');
+        }
+
         $pdo->beginTransaction();
 
         // Valida se a arma está disponível (DISPONIBILIDADE = 1) e já busca o SERIAL
-        $stmt = $pdo->prepare("SELECT ID_ARMAMENTO, SERIAL, DISPONIBILIDADE FROM ARMAMENTO WHERE ID_ARMAMENTO = :id FOR UPDATE");
+        $stmt = $pdo->prepare("SELECT ID_ARMAMENTO, SERIAL, DISPONIBILIDADE, ATIVO FROM ARMAMENTO WHERE ID_ARMAMENTO = :id FOR UPDATE");
         $stmt->execute([':id' => $idArmamento]);
         $arma = $stmt->fetch();
 
         if (!$arma) {
             throw new RuntimeException('Arma não encontrada.');
         }
+        if ((int) $arma['ATIVO'] !== 1) {
+            throw new RuntimeException('Esta arma está desativada e não pode ser cautelada.');
+        }
         if ((int) $arma['DISPONIBILIDADE'] !== 1) {
             throw new RuntimeException('Essa arma não está disponível para cautela.');
         }
 
         // Valida se o atirador existe e está ativo
-        $stmt = $pdo->prepare('SELECT ID_ATIRADOR FROM ATIRADOR WHERE ID_ATIRADOR = :id AND ATIVO = 1 LIMIT 1');
+        $stmt = $pdo->prepare('SELECT ID_ATIRADOR FROM ATIRADOR WHERE ID_ATIRADOR = :id AND ATIVO = 1 LIMIT 1 FOR UPDATE');
         $stmt->execute([':id' => $idPessoa]);
         if (!$stmt->fetchColumn()) {
             throw new RuntimeException('O atirador selecionado não está ativo.');
         }
 
-        // Valida se já existe cautela em aberto (HORA_F nula ou vazia) para esta arma
-        $stmt = $pdo->prepare('SELECT COUNT(*) FROM CAUTELA WHERE ID_ARMAMENTO = :id AND (HORA_F IS NULL OR HORA_F = "00:00:00")');
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM CAUTELA WHERE ID_ARMAMENTO = :id AND HORA_F IS NULL');
         $stmt->execute([':id' => $idArmamento]);
         if ((int) $stmt->fetchColumn() > 0) {
             throw new RuntimeException('Já existe cautela em aberto para essa arma.');
@@ -92,9 +98,15 @@ try {
     }
 
     if ($acao === 'devolver') {
-        $horaFim = date('H:i:s');
+        $agora = new DateTimeImmutable();
+        $diaFim = $agora->format('Y-m-d');
+        $horaFim = $agora->format('H:i:s');
         $comAlteracao = isset($_POST['com_alteracao']) ? 1 : 0;
         $descricaoDevolucao = trim((string) ($_POST['descricao_devolucao'] ?? ''));
+
+        if (preg_match('/\A.{0,255}\z/usD', $descricaoDevolucao) !== 1) {
+            throw new RuntimeException('A descrição da devolução deve ter até 255 caracteres.');
+        }
 
         $pdo->beginTransaction();
         $stmt = $pdo->prepare('SELECT ID_ARMAMENTO, HORA_F FROM CAUTELA WHERE ID_CAUTELA = :id FOR UPDATE');
@@ -104,13 +116,13 @@ try {
         if (!$registro) {
             throw new RuntimeException('Cautela não encontrada.');
         }
-        if ($registro['HORA_F'] !== null && $registro['HORA_F'] !== '00:00:00') {
+        if ($registro['HORA_F'] !== null) {
             throw new RuntimeException('A devolução desta cautela já foi registrada.');
         }
 
-        // Atualiza a cautela com a hora final e os dados de devolução
-        $stmt = $pdo->prepare('UPDATE CAUTELA SET HORA_F = :hora_f, COM_ALTERACAO = :alt, DESCRICAO_DEVOLUCAO = :desc WHERE ID_CAUTELA = :id');
+        $stmt = $pdo->prepare('UPDATE CAUTELA SET DIA_F = :dia_f, HORA_F = :hora_f, COM_ALTERACAO = :alt, DESCRICAO_DEVOLUCAO = :desc WHERE ID_CAUTELA = :id');
         $stmt->execute([
+            ':dia_f' => $diaFim,
             ':hora_f' => $horaFim,
             ':alt' => $comAlteracao,
             ':desc' => $descricaoDevolucao,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/proteger.php';
 exigir_admin();
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/perfis.php';
 
 $pdo = conectar();
 
@@ -12,73 +13,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string) ($_POST['acao'] ?? '');
 
     if ($acao === 'criar') {
-        $nome = trim((string) ($_POST['nome'] ?? ''));
-        $entrada = strtolower(trim((string) ($_POST['entrada'] ?? '')));
-        $senha = (string) ($_POST['senha'] ?? '');
-
-        if (strlen($nome) < 3 || strlen($nome) > 250 || strlen($entrada) > 150 || strlen($senha) < 8 || strlen($senha) > 72) {
-            mensagem_flash('erro', 'Confira nome, login e senha (mínimo de 8 caracteres).');
-        } else {
-            try {
-                $pdo->beginTransaction();
-                $stmt = $pdo->prepare("INSERT INTO USUARIO (NOME, ENTRADA, SENHA, CARGO, ATIVO)
-                    VALUES (:nome, :entrada, :senha, 'ARMEIRO', 1)");
-                $stmt->execute([
-                    ':nome' => $nome,
-                    ':entrada' => $entrada,
-                    ':senha' => password_hash($senha, PASSWORD_DEFAULT)
-                ]);
-                $id = (int) $pdo->lastInsertId();
-                registrar_log($pdo, (int) $_SESSION['id_usuario'], 'ARMEIRO_CRIADO', "{$nome} cadastrado.");
-                $pdo->commit();
-                mensagem_flash('sucesso', 'Armeiro cadastrado com sucesso.');
-            } catch (PDOException $ex) {
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                if ((string) $ex->getCode() === '23000') {
-                    mensagem_flash('erro', 'Já existe uma conta com esse login.');
-                } else {
-                    throw $ex;
-                }
-            }
-        }
-    } elseif ($acao === 'alterar_status') {
+        mensagem_flash('erro', 'Cadastre o armeiro pela ficha da tropa, preenchendo seus dados reais.');
+        header('Location: pessoa-form.php?perfil=ARMEIRO', true, 303);
+        exit;
+    }
+    if ($acao !== 'alterar_status') {
+        mensagem_flash('erro', 'Ação não reconhecida.');
+    } else {
         $id = filter_var($_POST['id'] ?? '', FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($id === false) {
             mensagem_flash('erro', 'Armeiro inválido.');
         } else {
-            $pdo->beginTransaction();
             try {
-                $stmt = $pdo->prepare("SELECT ID_USUARIO, NOME, ENTRADA, ATIVO FROM USUARIO
-                    WHERE ID_USUARIO = :id AND CARGO = 'ARMEIRO' FOR UPDATE");
-                $stmt->execute([':id' => $id]);
-                $conta = $stmt->fetch();
-                if (!$conta) {
-                    $pdo->rollBack();
-                    mensagem_flash('erro', 'Somente armeiros podem ter o acesso alterado.');
+                $pdo->beginTransaction();
+                $conta = perfis_usuario($pdo, (int) $id, true);
+                if (!$conta || $conta['CARGO'] !== 'ARMEIRO') throw new RuntimeException('Somente contas de armeiro podem ser alteradas nesta página.');
+                $novoEstado = (int) $conta['ATIVO'] === 1 ? 0 : 1;
+                $stmt = $pdo->prepare('SELECT ID_ATIRADOR FROM ATIRADOR WHERE ID_USUARIO = :usuario ORDER BY ID_ATIRADOR');
+                $stmt->execute([':usuario' => (int) $id]);
+                $fichas = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                if (count($fichas) > 1) throw new RuntimeException('Esta conta está vinculada a mais de uma ficha. Confira os vínculos antes de alterar o acesso.');
+                if (!$fichas) {
+                    if ($novoEstado === 1) throw new RuntimeException('Complete a ficha do atirador antes de reativar esta conta.');
+                    $stmt = $pdo->prepare('UPDATE USUARIO SET ATIVO = 0 WHERE ID_USUARIO = :id');
+                    $stmt->execute([':id' => (int) $id]);
+                    registrar_log($pdo, (int) $_SESSION['id_usuario'], 'ARMEIRO_DESATIVADO', 'Acesso de ' . $conta['NOME'] . ' desativado.');
                 } else {
-                    $novoEstado = (int) $conta['ATIVO'] === 1 ? 0 : 1;
-                    $stmt = $pdo->prepare("UPDATE USUARIO SET ATIVO = :ativo WHERE ID_USUARIO = :id AND CARGO = 'ARMEIRO'");
-                    $stmt->execute([':ativo' => $novoEstado, ':id' => $id]);
-                    registrar_log(
-                        $pdo,
-                        (int) $_SESSION['id_usuario'],
-                        $novoEstado ? 'ARMEIRO_ATIVADO' : 'ARMEIRO_DESATIVADO',
-                        "{$conta['NOME']} " . ($novoEstado ? 'ativado.' : 'desativado.')
-                    );
-                    $pdo->commit();
-                    mensagem_flash('sucesso', $novoEstado ? 'Armeiro reativado.' : 'Armeiro desativado.');
+                    $ficha = perfis_bloquear_ficha($pdo, (int) $fichas[0]);
+                    if ($ficha['PERFIL'] !== 'ARMEIRO') {
+                        if ($novoEstado === 1) throw new RuntimeException('Altere o perfil da ficha para Armeiro antes de conceder acesso.');
+                        $stmt = $pdo->prepare('UPDATE USUARIO SET ATIVO = 0 WHERE ID_USUARIO = :id');
+                        $stmt->execute([':id' => (int) $id]);
+                        registrar_log($pdo, (int) $_SESSION['id_usuario'], 'ARMEIRO_DESATIVADO', 'Acesso de ' . $conta['NOME'] . ' desativado.');
+                    } else {
+                        perfis_sincronizar_status($pdo, $ficha, $novoEstado);
+                        $stmt = $pdo->prepare('UPDATE ATIRADOR SET ATIVO = :ativo WHERE ID_ATIRADOR = :pessoa');
+                        $stmt->execute([':ativo' => $novoEstado, ':pessoa' => (int) $ficha['ID_ATIRADOR']]);
+                        if ((int) $ficha['ATIVO'] !== $novoEstado) registrar_log($pdo, (int) $_SESSION['id_usuario'], $novoEstado ? 'ATIRADOR_REATIVADO' : 'ATIRADOR_DESATIVADO', 'Situação de ' . $conta['NOME'] . ($novoEstado ? ' reativada.' : ' desativada.'));
+                    }
                 }
-            } catch (Throwable $ex) {
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                throw $ex;
+                $pdo->commit();
+                mensagem_flash('sucesso', $novoEstado ? 'Armeiro e ficha reativados.' : 'Acesso do armeiro desativado.');
+            } catch (Throwable $erro) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                mensagem_flash('erro', $erro instanceof RuntimeException && !($erro instanceof PDOException) ? $erro->getMessage() : 'Não foi possível alterar o acesso do armeiro.');
             }
         }
-    } else {
-        mensagem_flash('erro', 'Ação não reconhecida.');
     }
     header('Location: operadores.php', true, 303);
     exit;
@@ -119,7 +99,7 @@ $pages = max(1, (int) ceil($total / $limit));
 $page = min($page, $pages);
 $offset = ($page - 1) * $limit;
 
-$stmt = $pdo->prepare("SELECT ID_USUARIO, NOME, ENTRADA, ATIVO FROM USUARIO WHERE {$where} ORDER BY ID_USUARIO DESC LIMIT :limite OFFSET :offset");
+$stmt = $pdo->prepare("SELECT U.ID_USUARIO, U.NOME, U.ENTRADA, U.ATIVO, (SELECT MIN(A.ID_ATIRADOR) FROM ATIRADOR A WHERE A.ID_USUARIO = U.ID_USUARIO) AS ID_ATIRADOR, (SELECT MIN(A.PERFIL) FROM ATIRADOR A WHERE A.ID_USUARIO = U.ID_USUARIO) AS PERFIL FROM USUARIO U WHERE {$where} ORDER BY ID_USUARIO DESC LIMIT :limite OFFSET :offset");
 foreach ($params as $k => $v) {
     $stmt->bindValue($k, $v, $k === ':ativo' ? PDO::PARAM_INT : PDO::PARAM_STR);
 }
@@ -154,22 +134,9 @@ abrir_painel('Armeiros', 'operadores');
       </div>
     </div>
     
-    <form method="post" class="form-painel" autocomplete="off">
-      <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="acao" value="criar">
-
-      <label for="nome">Nome completo</label>
-      <input type="text" name="nome" id="nome" maxlength="250" minlength="3" placeholder="Nome completo" required>
-
-      <label for="entrada">Login (Nome de Usuário)</label>
-      <input type="text" name="entrada" id="entrada" maxlength="150" placeholder="ex: joao.silva" required>
-
-      <label for="senha">Senha Inicial</label>
-      <input type="password" name="senha" id="senha" minlength="8" maxlength="72" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" required>
-      <small>O armeiro poderá alterar esta senha posteriormente em "Minha conta".</small>
-
-      <button type="submit" class="botao-primario" style="margin-top: 15px;">Cadastrar Armeiro</button>
-    </form>
+    <p>O armeiro é cadastrado junto com sua ficha de atirador, incluindo RA, nome de guerra e dados de acesso.</p>
+    <br><br>
+    <a class="botao-primario" href="pessoa-form.php?perfil=ARMEIRO">Cadastrar armeiro</a>
   </section>
 
   <section class="painel-card painel-card-largo">
@@ -215,6 +182,12 @@ abrir_painel('Armeiros', 'operadores');
                 </span>
               </td>
               <td style="text-align: right;">
+                <?php if ($op['ID_ATIRADOR'] !== null): ?>
+                    <a class="botao-linha" href="pessoa-form.php?id=<?= (int) $op['ID_ATIRADOR'] ?>">Editar ficha</a>
+                <?php else: ?>
+                    <a class="botao-linha" href="pessoa-form.php?usuario=<?= (int) $op['ID_USUARIO'] ?>">Completar ficha</a>
+                <?php endif; ?>
+                <?php if ((int) $op['ATIVO'] === 1 || ($op['ID_ATIRADOR'] !== null && $op['PERFIL'] === 'ARMEIRO')): ?>
                 <form method="post" style="display: inline;" onsubmit="return window.confirm('Deseja realmente alterar o status deste armeiro?');">
                   <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="acao" value="alterar_status">
@@ -223,6 +196,7 @@ abrir_painel('Armeiros', 'operadores');
                     <?= (int) $op['ATIVO'] === 1 ? 'Desativar' : 'Reativar' ?>
                   </button>
                 </form>
+                <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>

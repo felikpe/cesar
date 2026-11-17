@@ -5,14 +5,15 @@ exigir_admin();
 require_once __DIR__ . '/../includes/layout.php';
 $pdo = conectar();
 
-$acoes = $pdo->query('SELECT DISTINCT ACAO FROM LOG_SISTEMA ORDER BY ACAO')->fetchAll(PDO::FETCH_COLUMN);
+$acoesEssenciais = acoes_auditoria_sql($pdo);
+$acoes = $pdo->query('SELECT DISTINCT ACAO FROM LOG_SISTEMA WHERE ACAO IN (' . $acoesEssenciais . ') ORDER BY ACAO')->fetchAll(PDO::FETCH_COLUMN);
 $q = trim((string) ($_GET['q'] ?? ''));
 if (strlen($q) > 100) $q = substr($q, 0, 100);
 $acao = (string) ($_GET['acao'] ?? '');
 if ($acao !== '' && !in_array($acao, $acoes, true)) $acao = '';
 $pagina = max(1, min(10000, (int) ($_GET['pagina'] ?? 1)));
 $limite = 20;
-$clausulas = [];
+$clausulas = ['L.ACAO IN (' . $acoesEssenciais . ')'];
 $params = [];
 if ($acao !== '') { $clausulas[] = 'L.ACAO = :acao'; $params[':acao'] = $acao; }
 if ($q !== '') {
@@ -35,17 +36,17 @@ $stmt->bindValue(':limite', $limite, PDO::PARAM_INT);
 $stmt->bindValue(':offset', ($pagina - 1) * $limite, PDO::PARAM_INT);
 $stmt->execute();
 $logs = $stmt->fetchAll();
-abrir_painel('Logs do sistema', 'logs');
+abrir_painel('Auditoria do sistema', 'logs');
 ?>
-<div class="cabecalho-pagina"><div><div class="sobretitulo">AUDITORIA</div><h1>Logs do sistema</h1><p>Ações realizadas no sistema.</p></div><div class="etiqueta-ambiente"><?= $total ?> registro(s)</div></div>
-<nav class="acoes-pessoa" aria-label="Seções dos logs" style="margin-bottom: 16px; gap: 10px;">
+<div class="cabecalho-pagina"><div><div class="sobretitulo">AUDITORIA</div><h1>Auditoria do sistema</h1><p>Registros essenciais de segurança e operação.</p></div><div class="etiqueta-ambiente"><?= $total ?> registro(s)</div></div>
+<nav class="acoes-pessoa" aria-label="Seções da auditoria" style="margin-bottom: 16px; gap: 10px;">
   <a class="botao-primario" href="logs.php" aria-current="page">Atividades</a>
-  <a class="botao-linha" href="logs-emprestimos.php">Empréstimos</a>
+  <a class="botao-linha" href="logs-emprestimos.php">Cautelas</a>
 </nav>
 <section class="painel-card">
   <div class="cartao-topo"><div><h2>Registros de atividade</h2><p>Responsável, ação e horário.</p></div></div>
   <form class="filtros" method="get">
-    <input type="search" name="q" maxlength="100" value="<?= e($q) ?>" placeholder="Buscar responsável ou descrição" aria-label="Buscar logs">
+    <input type="search" name="q" maxlength="100" value="<?= e($q) ?>" placeholder="Buscar responsável ou descrição" aria-label="Buscar auditoria">
     <select name="acao" aria-label="Filtrar ação" onchange="this.form.submit()"><option value="">Todas as ações</option>
     <?php foreach ($acoes as $opcao): ?><option value="<?= e($opcao) ?>" <?= $acao === $opcao ? 'selected' : '' ?>><?= e(texto_auditoria($opcao)) ?></option><?php endforeach; ?>
     </select><button type="submit" class="botao-secundario">Filtrar</button>

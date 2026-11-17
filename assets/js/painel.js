@@ -2,31 +2,38 @@
 const menuButton = document.getElementById('alternar-menu');
 const menu = document.getElementById('menu-lateral');
 if (menuButton && menu) {
+  const closeButton = document.getElementById('fechar-menu');
+  const definirMenu = (aberto, devolverFoco = false) => {
+    menuButton.setAttribute('aria-expanded', String(aberto));
+    menuButton.setAttribute('aria-label', aberto ? 'Fechar menu' : 'Abrir menu');
+    menu.classList.toggle('aberto', aberto);
+    if (aberto) closeButton?.focus();
+    else if (devolverFoco) menuButton.focus();
+  };
   menuButton.addEventListener('click', () => {
     const expanded = menuButton.getAttribute('aria-expanded') === 'true';
-    menuButton.setAttribute('aria-expanded', String(!expanded));
-    menu.classList.toggle('aberto', !expanded);
+    definirMenu(!expanded);
+  });
+  closeButton?.addEventListener('click', () => definirMenu(false, true));
+  document.addEventListener('keydown', (evento) => {
+    if (evento.key === 'Escape' && menu.classList.contains('aberto')) definirMenu(false, true);
+  });
+  document.addEventListener('click', (evento) => {
+    if (!menu.contains(evento.target) && !menuButton.contains(evento.target)) definirMenu(false);
   });
 }
 
-// ── Controle de navegação interna ──────────────────────────────────────────
-// Usamos sessionStorage para sinalizar navegação interna.
-// ATENÇÃO: this.form.submit() (chamado via onchange/JS) NÃO dispara o evento
-// 'submit' do DOM, por isso sobrescrevemos o método nativo para garantir que
-// a flag seja sempre marcada, independentemente de como o form é submetido.
-
+let navegandoInternamente = false;
 function marcarNavegacaoInterna() {
-  sessionStorage.setItem('cesar_navegando', '1');
+  navegandoInternamente = true;
 }
 
-// Intercepta form.submit() chamados via JavaScript (ex.: onchange="this.form.submit()")
 const submitOriginal = HTMLFormElement.prototype.submit;
 HTMLFormElement.prototype.submit = function () {
   marcarNavegacaoInterna();
   submitOriginal.call(this);
 };
 
-// Links internos
 document.addEventListener('click', (evento) => {
   const link = evento.target.closest('a');
   if (link && link.href) {
@@ -34,28 +41,14 @@ document.addEventListener('click', (evento) => {
   }
 });
 
-// Envio de formulários via botão/Enter (complementar ao override acima)
-document.addEventListener('submit', () => {
-  marcarNavegacaoInterna();
+document.addEventListener('submit', (evento) => {
+  if (!evento.defaultPrevented) marcarNavegacaoInterna();
 });
 
-// Alerta de confirmação ao tentar fechar aba/navegador diretamente
 window.addEventListener('beforeunload', (evento) => {
-  const navegando = sessionStorage.getItem('cesar_navegando') === '1';
-  if (!navegando) {
+  if (!navegandoInternamente) {
     evento.preventDefault();
     evento.returnValue = '';
   }
-  // NÃO remove cesar_navegando aqui — o pagehide ainda precisa lê-la
-});
-
-// Limpeza da sessão do C.E.S.A.R. somente ao encerrar de verdade
-window.addEventListener('pagehide', (evento) => {
-  const navegando = sessionStorage.getItem('cesar_navegando') === '1';
-  if (!navegando) {
-    // Não é uma navegação interna — aba/navegador foi fechado
-    sessionStorage.removeItem('cesar_ativo');
-  }
-  // Sempre limpa a flag de navegação interna
-  sessionStorage.removeItem('cesar_navegando');
+  navegandoInternamente = false;
 });

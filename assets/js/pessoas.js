@@ -20,7 +20,9 @@ if (campoFoto && imagemPreview && vazioPreview) {
     urlTemporaria = URL.createObjectURL(foto);
     imagemPreview.src = urlTemporaria;
     imagemPreview.hidden = false;
+    imagemPreview.style.display = 'block';
     vazioPreview.hidden = true;
+    vazioPreview.style.display = 'none';
   });
   window.addEventListener('pagehide', () => {
     if (urlTemporaria) URL.revokeObjectURL(urlTemporaria);
@@ -31,18 +33,4 @@ document.querySelectorAll('form[data-confirmar]').forEach((form) => {
   form.addEventListener('submit', (event) => {
     if (!window.confirm(form.dataset.confirmar || 'Confirmar alteração?')) event.preventDefault();
   });
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-    // Intercepta formulários que possuem o atributo data-confirmar para exibir um alerta de confirmação antes de enviar
-    const formulariosComConfirmacao = document.querySelectorAll('form[data-confirmar]');
-
-    formulariosComConfirmacao.forEach(form => {
-        form.addEventListener('submit', (evento) => {
-            const mensagem = form.getAttribute('data-confirmar');
-            if (mensagem && !window.confirm(mensagem)) {
-                evento.preventDefault(); // Cancela o envio se o usuário clicar em "Cancelar"
-            }
-        });
-    });
 });

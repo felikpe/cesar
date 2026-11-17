@@ -24,15 +24,7 @@ $stmt->execute([
 
 $contaAtual = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (
-    !$contaAtual ||
-    (int) $contaAtual['ATIVO'] !== 1 ||
-    !in_array(
-        $contaAtual['CARGO'],
-        ['ARMEIRO', 'ADMINISTRADOR'],
-        true
-    )
-) {
+if (!conta_tem_acesso($pdo, $contaAtual)) {
     $_SESSION = [];
     session_regenerate_id(true);
 
@@ -44,6 +36,7 @@ $_SESSION['id_usuario'] = (int) $contaAtual['ID_USUARIO'];
 $_SESSION['nome'] = $contaAtual['NOME'];
 $_SESSION['cargo'] = $contaAtual['CARGO'];
 $_SESSION['foto_perfil'] = $contaAtual['FOTO_PERFIL'] ?? null;
+$_SESSION['biometria_sessao'] ??= bin2hex(random_bytes(32));
 
 function exigir_admin(): void
 {

@@ -46,7 +46,7 @@ $pagina = min($pagina, $paginas);
 $offset = ($pagina - 1) * $limite;
 
 $consulta = $pdo->prepare('SELECT ID_ATIRADOR, RA, NOME, NOME_GUERRA, NUMERO,
-        FOTO, ATIVO FROM ATIRADOR' . $where
+        FOTO, ATIVO, ID_DIGITAL FROM ATIRADOR' . $where
         . ' ORDER BY NUMERO ASC, NOME ASC LIMIT :limite OFFSET :offset');
 
 foreach ($parametros as $chave => $valor) {
@@ -80,7 +80,7 @@ abrir_painel('Atiradores', 'pessoas');
     
     <select name="status" aria-label="Filtrar por status" onchange="this.form.submit()">
         <option value="ativos" <?= $status === 'ativos' ? 'selected' : '' ?>>Ativos</option>
-        <option value="inativos" <?= $status === 'inativos' ? 'selected' : '' ?>>Inativos</option>
+        <option value="inativos" <?= $status === 'inativos' ? 'selected' : '' ?>>Desativados</option>
         <option value="todos" <?= $status === 'todos' ? 'selected' : '' ?>>Todos</option>
     </select>
 
@@ -119,7 +119,7 @@ abrir_painel('Atiradores', 'pessoas');
             <td><?= e($atirador['NUMERO'] !== null && $atirador['NUMERO'] !== '' ? $atirador['NUMERO'] : '—') ?></td>
             <td>
               <span class="estado <?= (int) $atirador['ATIVO'] ? 'estado-ativo' : 'estado-inativo' ?>">
-                <?= (int) $atirador['ATIVO'] ? 'Ativo' : 'Inativo' ?>
+                <?= (int) $atirador['ATIVO'] ? 'Ativo' : 'Desativado' ?>
               </span>
             </td>
             <td>

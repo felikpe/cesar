@@ -22,12 +22,17 @@ $destino = $id ? 'catalogo-form.php?id=' . $id : 'catalogo-form.php';
 $serial = trim((string) ($_POST['serial'] ?? ''));
 $modelo = trim((string) ($_POST['modelo'] ?? ''));
 $condicao = trim((string) ($_POST['condicao'] ?? ''));
-$disponibilidade = isset($_POST['disponibilidade']) ? (int)$_POST['disponibilidade'] : 1;
+$ativoSolicitado = $_POST['ativo'] ?? null;
+if ($ativoSolicitado !== null && (!is_string($ativoSolicitado) || !in_array($ativoSolicitado, ['0', '1'], true))) {
+    mensagem_flash('erro', 'Selecione uma situação válida para a arma.');
+    header('Location: ' . $destino, true, 303);
+    exit;
+}
 
 // Validações básicas alinhadas ao banco (Serial com exatos ou até 5 caracteres, modelos MOSQUEFAL ou PRESSAO)
 $modelosValidos = ['MOSQUEFAL', 'PRESSAO'];
 
-if (strlen($serial) !== 5 || !in_array($modelo, $modelosValidos, true) || strlen($condicao) > 250) {
+if (!preg_match('/\A[A-Za-z0-9]{5}\z/D', $serial) || !in_array($modelo, $modelosValidos, true) || preg_match('/\A.{0,250}\z/usD', $condicao) !== 1) {
     mensagem_flash('erro', 'Confira os dados. O serial deve ter exatamente 5 caracteres e o modelo deve ser válido.');
     header('Location: ' . $destino, true, 303);
     exit;
@@ -40,25 +45,43 @@ try {
 
     if ($id > 0) {
         // Atualização de arma existente
-        $stmt = $pdo->prepare('UPDATE ARMAMENTO SET SERIAL = :serial, MODELO = :modelo, CONDICAO = :condicao, DISPONIBILIDADE = :disponibilidade WHERE ID_ARMAMENTO = :id');
+        $consulta = $pdo->prepare('SELECT ID_ARMAMENTO, ATIVO FROM ARMAMENTO WHERE ID_ARMAMENTO = :id FOR UPDATE');
+        $consulta->execute([':id' => $id]);
+        $registro = $consulta->fetch(PDO::FETCH_ASSOC);
+        if (!$registro) {
+            throw new RuntimeException('Arma não encontrada.');
+        }
+
+        $ativo = $ativoSolicitado === null ? (int) $registro['ATIVO'] : (int) $ativoSolicitado;
+        if ($ativo === 0 && (int) $registro['ATIVO'] !== 0) {
+            $cautela = $pdo->prepare('SELECT ID_CAUTELA FROM CAUTELA WHERE ID_ARMAMENTO = :id AND HORA_F IS NULL LIMIT 1');
+            $cautela->execute([':id' => $id]);
+            if ($cautela->fetchColumn()) {
+                throw new RuntimeException('Esta arma está cautelada. Registre a devolução antes de desativá-la.');
+            }
+        }
+
+        $stmt = $pdo->prepare('UPDATE ARMAMENTO SET SERIAL = :serial, MODELO = :modelo, CONDICAO = :condicao, ATIVO = :ativo WHERE ID_ARMAMENTO = :id');
         $stmt->execute([
             ':serial' => $serial,
             ':modelo' => $modelo,
             ':condicao' => $condicao,
-            ':disponibilidade' => $disponibilidade,
+            ':ativo' => $ativo,
             ':id' => $id
         ]);
 
         registrar_log($pdo, (int)$_SESSION['id_usuario'], 'ARMA_ATUALIZADA', "Arma ID #{$id} atualizada.");
+        if ($ativo !== (int) $registro['ATIVO']) {
+            registrar_log($pdo, (int) $_SESSION['id_usuario'], $ativo === 1 ? 'ARMA_REATIVADA' : 'ARMA_DESATIVADA', 'Arma ' . $serial . ($ativo === 1 ? ' reativada.' : ' desativada.'));
+        }
         $msg = 'Arma atualizada com sucesso.';
     } else {
         // Cadastro de nova arma
-        $stmt = $pdo->prepare('INSERT INTO ARMAMENTO (SERIAL, MODELO, CONDICAO, DISPONIBILIDADE) VALUES (:serial, :modelo, :condicao, :disponibilidade)');
+        $stmt = $pdo->prepare('INSERT INTO ARMAMENTO (SERIAL, MODELO, CONDICAO, DISPONIBILIDADE, ATIVO) VALUES (:serial, :modelo, :condicao, 1, 1)');
         $stmt->execute([
             ':serial' => $serial,
             ':modelo' => $modelo,
-            ':condicao' => $condicao,
-            ':disponibilidade' => $disponibilidade
+            ':condicao' => $condicao
         ]);
 
         $id = (int) $pdo->lastInsertId();
@@ -79,7 +102,7 @@ try {
     // Identifica se o erro foi violação de chave única (Serial duplicado no banco)
     $msg = ($ex instanceof PDOException && (string)$ex->getCode() === '23000')
         ? 'Já existe uma arma cadastrada com este número de série.'
-        : ($ex instanceof RuntimeException ? $ex->getMessage() : 'Falha ao salvar a arma no banco de dados.');
+        : ($ex instanceof RuntimeException && !($ex instanceof PDOException) ? $ex->getMessage() : 'Falha ao salvar a arma no banco de dados.');
 
     mensagem_flash('erro', $msg);
     header('Location: ' . $destino, true, 303);

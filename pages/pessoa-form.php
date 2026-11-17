@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/proteger.php';
 require_once __DIR__ . '/../includes/layout.php';
+require_once __DIR__ . '/../includes/biometria-painel.php';
+require_once __DIR__ . '/../includes/perfis.php';
 
 $id = filter_var($_GET['id'] ?? '0', FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
 if ($id === false) {
@@ -21,11 +23,12 @@ $atirador = [
     'ID_DIGITAL' => null,
     'ATIVO' => 1,
     'ID_ARMAMENTO' => null,
-    'ID_USUARIO' => null
+    'ID_USUARIO' => null,
+    'PERFIL' => 'ATIRADOR'
 ];
 
 if ($id > 0) {
-    $stmt = conectar()->prepare('SELECT ID_ATIRADOR, RA, NOME, NOME_GUERRA, NUMERO, FOTO, ID_DIGITAL, ATIVO, ID_ARMAMENTO, ID_USUARIO FROM ATIRADOR WHERE ID_ATIRADOR = :id LIMIT 1');
+    $stmt = conectar()->prepare('SELECT ID_ATIRADOR, RA, NOME, NOME_GUERRA, NUMERO, FOTO, ID_DIGITAL, ATIVO, ID_ARMAMENTO, ID_USUARIO, PERFIL FROM ATIRADOR WHERE ID_ATIRADOR = :id LIMIT 1');
     $stmt->execute([':id' => $id]);
     $atirador = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -35,11 +38,40 @@ if ($id > 0) {
     }
 }
 
-// Busca armas disponíveis para associar como armamento principal (opcional)
-$armas = conectar()->query('SELECT ID_ARMAMENTO, SERIAL, MODELO FROM ARMAMENTO WHERE DISPONIBILIDADE = 1 ORDER BY SERIAL ASC')->fetchAll(PDO::FETCH_ASSOC);
+$consultaArmas = conectar()->prepare('SELECT ID_ARMAMENTO, SERIAL, MODELO, ATIVO FROM ARMAMENTO A WHERE (A.DISPONIBILIDADE = 1 AND A.ATIVO = 1 AND NOT EXISTS (SELECT 1 FROM CAUTELA C WHERE C.ID_ARMAMENTO = A.ID_ARMAMENTO AND C.HORA_F IS NULL)) OR A.ID_ARMAMENTO = :atual ORDER BY A.ATIVO DESC, A.SERIAL ASC');
+$consultaArmas->bindValue(':atual', (int) $atirador['ID_ARMAMENTO'], PDO::PARAM_INT);
+$consultaArmas->execute();
+$armas = $consultaArmas->fetchAll(PDO::FETCH_ASSOC);
 
-// Busca usuários caso queira vincular o atirador a um armeiro
-$usuarios = conectar()->query('SELECT ID_USUARIO, NOME FROM USUARIO WHERE ATIVO = 1 ORDER BY NOME ASC')->fetchAll(PDO::FETCH_ASSOC);
+$usuarioLegado = filter_var($_GET['usuario'] ?? '0', FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+if ($usuarioLegado === false) {
+    http_response_code(400);
+    exit('Conta inválida.');
+}
+if ($usuarioLegado > 0 && (!perfis_admin() || $id > 0)) {
+    http_response_code(403);
+    exit('Acesso não permitido.');
+}
+$conta = perfis_usuario(conectar(), $atirador['ID_USUARIO'] === null ? null : (int) $atirador['ID_USUARIO']);
+if ($usuarioLegado > 0) {
+    $conta = perfis_usuario(conectar(), $usuarioLegado);
+    if (!$conta || $conta['CARGO'] !== 'ARMEIRO') {
+        http_response_code(404);
+        exit('Conta de armeiro não encontrada.');
+    }
+    try {
+        perfis_vinculo_exclusivo(conectar(), $usuarioLegado, 0);
+    } catch (RuntimeException $erro) {
+        http_response_code(409);
+        exit(e($erro->getMessage()));
+    }
+    $atirador['NOME'] = $conta['NOME'];
+    $atirador['PERFIL'] = 'ARMEIRO';
+}
+if ($id === 0 && $usuarioLegado === 0 && perfis_admin() && ($_GET['perfil'] ?? '') === 'ARMEIRO') $atirador['PERFIL'] = 'ARMEIRO';
+$contaAdministrador = $conta && $conta['CARGO'] === 'ADMINISTRADOR';
+$podeGerirAcesso = perfis_admin() && !$contaAdministrador;
+$contaNova = !$conta;
 
 $flash = recuperar_flash();
 $titulo = $id ? 'Editar atirador' : 'Cadastrar atirador';
@@ -100,29 +132,45 @@ abrir_painel($titulo, 'pessoas');
             <small>Número baseado na antiguidade na tropa (máx 2 dígitos).</small>
 
             <label for="id_digital">ID Biométrico (ESP32)</label>
-            <input id="id_digital" name="id_digital" type="number" min="1" max="99999" value="<?= e($atirador['ID_DIGITAL'] ?? '') ?>" placeholder="ID retornado pelo sensor biométrico">
-            <small>Número identificador da digital gravada no sensor do ESP32.</small>
+            <div class="biometria-campo">
+                <input id="id_digital" name="id_digital" type="number" readonly value="<?= e((string) ($atirador['ID_DIGITAL'] ?? '')) ?>" placeholder="ID retornado pelo sensor biométrico">
+                <?php botao_biometria('cadastro', (int) $id, isset($atirador['ID_DIGITAL']) ? (int) $atirador['ID_DIGITAL'] : null, 'Cadastrar digital do atirador', (string) ($atirador['NOME_GUERRA'] ?: $atirador['NOME'])); ?>
+            </div>
+            <small>ID vinculado automaticamente após o cadastro pelo leitor USB.</small>
 
             <label for="id_armamento">Armamento Principal (Opcional)</label>
             <select id="id_armamento" name="id_armamento">
                 <option value="">Nenhum / Não vinculado</option>
                 <?php foreach ($armas as $arma): ?>
                     <option value="<?= (int)$arma['ID_ARMAMENTO'] ?>" <?= (int)$atirador['ID_ARMAMENTO'] === (int)$arma['ID_ARMAMENTO'] ? 'selected' : '' ?>>
-                        <?= e($arma['SERIAL']) ?> (<?= e($arma['MODELO']) ?>)
+                        <?= e($arma['SERIAL']) ?> (<?= e($arma['MODELO']) ?>)<?= (int) $arma['ATIVO'] === 0 ? ' — Desativada' : '' ?>
                     </option>
                 <?php endforeach; ?>
             </select>
 
-            <label for="id_usuario">Vínculo com Usuário/Armeiro (Opcional)</label>
-            <select id="id_usuario" name="id_usuario">
-                <option value="">Não é armeiro</option>
-                <?php foreach ($usuarios as $usr): ?>
-                    <option value="<?= (int)$usr['ID_USUARIO'] ?>" <?= (int)$atirador['ID_USUARIO'] === (int)$usr['ID_USUARIO'] ? 'selected' : '' ?>>
-                        <?= e($usr['NOME']) ?>
-                    </option>
-                <?php endforeach; ?>
+            <label for="perfil">Perfil</label>
+            <select id="perfil" name="perfil" <?= !$podeGerirAcesso ? 'disabled' : '' ?>>
+                <option value="ATIRADOR" <?= $atirador['PERFIL'] === 'ATIRADOR' ? 'selected' : '' ?>>Atirador</option>
+                <option value="ARMEIRO" <?= $atirador['PERFIL'] === 'ARMEIRO' ? 'selected' : '' ?>>Armeiro</option>
             </select>
-            <small>Para quando o atirador também exerce função de auxiliar/armeiro no painel.</small>
+            <?php if (!$podeGerirAcesso): ?>
+                <small><?= $contaAdministrador ? 'A conta de administrador vinculada é preservada; o acesso administrativo não é alterado por esta ficha.' : 'Somente administradores podem conceder ou alterar acesso ao sistema.' ?></small>
+            <?php else: ?>
+                <?php if ($usuarioLegado > 0): ?>
+                    <input type="hidden" name="usuario_legado" value="<?= (int) $usuarioLegado ?>">
+                    <small>Complete os dados reais da tropa para vincular esta conta existente.</small>
+                <?php endif; ?>
+                <fieldset id="perfil-acesso" data-conta-nova="<?= $contaNova ? '1' : '0' ?>" <?= $atirador['PERFIL'] !== 'ARMEIRO' ? 'hidden' : '' ?>>
+                    <legend>Acesso do armeiro</legend>
+                    <label for="login_acesso">Login *</label>
+                    <input id="login_acesso" name="login_acesso" maxlength="150" autocomplete="username" value="<?= e($conta['ENTRADA'] ?? '') ?>" data-obrigatorio="1" <?= $atirador['PERFIL'] === 'ARMEIRO' ? 'required' : 'disabled' ?>>
+                    <label for="senha_acesso"><?= $contaNova ? 'Senha inicial *' : 'Nova senha (opcional)' ?></label>
+                    <input id="senha_acesso" name="senha_acesso" type="password" minlength="8" maxlength="72" autocomplete="new-password" data-obrigatorio="<?= $contaNova ? '1' : '0' ?>" <?= $atirador['PERFIL'] === 'ARMEIRO' ? ($contaNova ? 'required' : '') : 'disabled' ?>>
+                    <label for="confirmar_senha_acesso">Confirmar senha<?= $contaNova ? ' *' : '' ?></label>
+                    <input id="confirmar_senha_acesso" name="confirmar_senha_acesso" type="password" minlength="8" maxlength="72" autocomplete="new-password" data-obrigatorio="<?= $contaNova ? '1' : '0' ?>" <?= $atirador['PERFIL'] === 'ARMEIRO' ? ($contaNova ? 'required' : '') : 'disabled' ?>>
+                    <small><?= $contaNova ? 'A conta de armeiro será criada junto com a ficha, após salvar os dados obrigatórios.' : 'Deixe a senha em branco para manter a senha atual.' ?></small>
+                </fieldset>
+            <?php endif; ?>
 
             <button type="submit" class="botao-primario" style="margin-top: 20px;">Salvar Atirador</button>
         </form>
@@ -134,7 +182,7 @@ abrir_painel($titulo, 'pessoas');
         </div>
         <?php if ($id): ?>
             <p><strong>Registro ID #<?= (int) $id ?></strong></p>
-            <p><strong>Situação:</strong> <?= (int) $atirador['ATIVO'] ? 'Ativo na Tropa' : 'Inativo' ?></p>
+            <p><strong>Situação:</strong> <?= (int) $atirador['ATIVO'] ? 'Ativo na Tropa' : 'Desativado' ?></p>
         <?php else: ?>
             <p>Cadastre os dados da tropa para habilitar a biometria e o controle de cautelas.</p>
         <?php endif; ?>
@@ -142,4 +190,5 @@ abrir_painel($titulo, 'pessoas');
 </div>
 
 <script src="../assets/js/pessoas.js" defer></script>
+<script src="../assets/js/pessoa-perfil.js?v=1" defer></script>
 <?php fechar_painel(); ?>

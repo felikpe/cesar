@@ -30,12 +30,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (
-                $usuario &&
-                (int) $usuario['ATIVO'] === 1 &&
-                in_array($usuario['CARGO'], ['ARMEIRO', 'ADMINISTRADOR'], true) &&
+                conta_tem_acesso($pdo, $usuario) &&
                 password_verify($senha, $usuario['SENHA'])
             ) {
             session_regenerate_id(true);
+            $_SESSION['biometria_sessao'] = bin2hex(random_bytes(32));
             $_SESSION['id_usuario'] = (int) $usuario['ID_USUARIO'];
             $_SESSION['nome'] = $usuario['NOME'];
             $_SESSION['cargo'] = $usuario['CARGO'];
@@ -51,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtLog->execute([
                         ':id' => (int) $usuario['ID_USUARIO'],
                         ':acao' => 'LOGIN',
-                        ':desc' => 'Acesso administrativo realizado.',
+                        ':desc' => 'Entrada no sistema.',
                         ':ip' => $ip_origem
                     ]);
                 } catch (Exception $e) {
@@ -75,14 +74,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>C.E.S.A.R. | Login</title>
     <script>
-        // Se a página foi fechada e reaberta do zero, o sessionStorage é nulo.
-        // Nesse caso, limpamos qualquer sessão residual para exigir login.
         if (!sessionStorage.getItem('cesar_ativo')) {
             <?php if (isset($_SESSION['id_usuario'])): ?>
-                fetch('sair.php', { method: 'POST' });
+                const formularioSaida = document.createElement('form');
+                formularioSaida.method = 'post';
+                formularioSaida.action = 'sair.php';
+                const tokenSaida = document.createElement('input');
+                tokenSaida.type = 'hidden';
+                tokenSaida.name = 'csrf_token';
+                tokenSaida.value = <?= json_encode(csrf_token()) ?>;
+                formularioSaida.appendChild(tokenSaida);
+                document.documentElement.appendChild(formularioSaida);
+                formularioSaida.submit();
             <?php endif; ?>
         } else {
-            // Se a mesma aba já possui autenticação ativa, prossegue ao painel
             <?php if (isset($_SESSION['id_usuario'])): ?>
                 window.location.replace('inicio.php');
             <?php else: ?>
@@ -90,12 +95,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <?php endif; ?>
         }
     </script>
-    <link rel="stylesheet" href="../assets/css/estilo.css">
+    <link rel="stylesheet" href="../assets/css/estilo.css?v=4">
+    <script src="../assets/js/senhas.js?v=1" defer></script>
 </head>
 <body>
     <div class="tela-login">
         <main class="caixa-login">
-            <img src="../assets/img/logo_2_cortada.png" alt="Logo C.E.S.A.R." class="logo">
+            <div class="logo-login"><img src="../assets/img/logo-login.png" alt="Logo C.E.S.A.R."></div>
             <h1>Acesso ao painel</h1>
 
             <form method="post" action="" onsubmit="sessionStorage.setItem('cesar_ativo', '1');">
